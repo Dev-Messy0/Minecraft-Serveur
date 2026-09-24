@@ -1,8 +1,25 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  build.sh — Build + packaging du panel Minecraft (Go) pour VPS + nginx
+#  scripts/build.sh — Build + packaging du panel Minecraft (Go)
+#  Repo : https://github.com/Dev-Messy0/Minecraft-Serveur
+# =============================================================================
+#  Usage :
+#     ./scripts/build.sh                            # build local
+#     ./scripts/build.sh panel.mondomaine.fr        # avec domaine
+#     sudo ./scripts/build.sh --install panel.mondomaine.fr
+#     ./scripts/build.sh --help
 # =============================================================================
 set -euo pipefail
+
+# ----------------------------- Racine du projet -----------------------------
+# Ce script est dans scripts/, on remonte à la racine (là où est go.mod)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+cd "$PROJECT_ROOT" || {
+  echo "✗ Impossible d'accéder à la racine du projet : $PROJECT_ROOT" >&2
+  exit 1
+}
 
 # ----------------------------- Paramètres -----------------------------------
 APP_NAME="mcpanel"
@@ -12,10 +29,9 @@ SERVICE_NAME="mcpanel"
 SERVICE_USER="mcpanel"
 PANEL_ADDR="127.0.0.1:8080"
 MC_PORT="25565"
-EMAIL="admin@example.com"
+EMAIL=""
 DOMAIN=""
 
-# Identifiants admin — modifiables par prompt ou arguments
 ADMIN_USER=""
 ADMIN_PASSWORD=""
 
@@ -41,17 +57,15 @@ Usage: $0 [options] [domaine]
 
 Options :
   -u, --user USER        Nom d'utilisateur admin
-  -p, --password PASS    Mot de passe admin
+  -p, --password PASS    Mot de passe admin (min. 12 car.)
       --port PORT        Port Minecraft (défaut : 25565)
   -e, --email EMAIL      Email Let's Encrypt
   -i, --install          Installe automatiquement (root requis)
 
-Sans -u/-p, les identifiants sont demandés de façon interactive.
-
 Exemples :
-  $0 panel.mondomaine.fr
-  $0 -u admin -p 'MotDePasseFort!' panel.mondomaine.fr
-  sudo $0 --install -u admin -p 'xxx' --email moi@domaine.fr panel.mondomaine.fr
+  ./scripts/build.sh panel.mondomaine.fr
+  ./scripts/build.sh -u admin -p 'MotDePasseFort!' -e moi@domaine.fr panel.mondomaine.fr
+  sudo ./scripts/build.sh --install -u admin -p 'xxx' -e moi@domaine.fr panel.mondomaine.fr
 EOF
       exit 0 ;;
     -*) die "Option inconnue : $1 (essaie --help)" ;;
@@ -59,11 +73,13 @@ EOF
   esac
 done
 
-# ----------------------------- Pré-requis build -----------------------------
-command -v go >/dev/null 2>&1 || die "Go n'est pas installé."
-[[ -f go.mod ]]        || die "go.mod introuvable."
-[[ -d templates ]]     || die "dossier 'templates' introuvable."
-[[ -f main.go ]]       || die "main.go introuvable."
+info "Racine projet : $PROJECT_ROOT"
+
+# ----------------------------- Pré-requis -----------------------------------
+command -v go >/dev/null 2>&1 || die "Go n'est pas installé. https://go.dev/dl/"
+[[ -f go.mod ]]    || die "go.mod introuvable à la racine ($PROJECT_ROOT)."
+[[ -f main.go ]]   || die "main.go introuvable."
+[[ -d templates ]] || die "dossier 'templates' introuvable."
 info "Go : $(go version | awk '{print $3}')"
 
 ARCH_RAW=$(uname -m)
@@ -93,9 +109,9 @@ if [[ -z "${DOMAIN}" ]]; then
 fi
 [[ -n "${DOMAIN}" ]] || die "Domaine requis."
 
-if [[ -z "${EMAIL}" || "${EMAIL}" == "admin@example.com" ]]; then
-  read -rp "Email Let's Encrypt [${EMAIL}] : " EMAIL_IN
-  EMAIL="${EMAIL_IN:-$EMAIL}"
+if [[ -z "${EMAIL}" ]]; then
+  read -rp "Email Let's Encrypt : " EMAIL
+  [[ -n "${EMAIL}" ]] || die "Email requis pour Let's Encrypt."
 fi
 
 # ----------------------------- Identifiants admin ---------------------------
@@ -103,53 +119,51 @@ echo
 info "Configuration du compte administrateur"
 echo
 
-# Username
 if [[ -z "${ADMIN_USER}" ]]; then
   read -rp "Nom d'utilisateur admin [admin] : " ADMIN_USER_IN
   ADMIN_USER="${ADMIN_USER_IN:-admin}"
 fi
 [[ "${ADMIN_USER}" =~ ^[a-zA-Z0-9_.-]{3,32}$ ]] \
-  || die "Nom d'utilisateur invalide (3-32 caractères alphanumériques, _ . -)"
+  || die "Nom d'utilisateur invalide (3-32 car., a-z A-Z 0-9 _ . -)"
 
-# Password — double saisie si interactif
 if [[ -z "${ADMIN_PASSWORD}" ]]; then
   while true; do
-    read -rsp "Mot de passe admin (min. 12 caractères) : " PWD1; echo
-    read -rsp "Confirme le mot de passe : " PWD2; echo
+    read -rsp "Mot de passe admin (min. 12 car.) : " PWD1; echo
+    read -rsp "Confirme : " PWD2; echo
 
-    [[ "${PWD1}" == "${PWD2}" ]] || { warn "Les mots de passe ne correspondent pas."; continue; }
-    [[ ${#PWD1} -ge 12 ]]        || { warn "Trop court (min. 12 caractères)."; continue; }
-    [[ "${PWD1}" =~ [A-Z] ]]     || { warn "Ajoute au moins une majuscule."; continue; }
-    [[ "${PWD1}" =~ [a-z] ]]     || { warn "Ajoute au moins une minuscule."; continue; }
-    [[ "${PWD1}" =~ [0-9] ]]     || { warn "Ajoute au moins un chiffre."; continue; }
+    [[ "${PWD1}" == "${PWD2}" ]] || { warn "Ne correspondent pas."; continue; }
+    [[ ${#PWD1} -ge 12 ]]        || { warn "Trop court (min. 12)."; continue; }
+    [[ "${PWD1}" =~ [A-Z] ]]     || { warn "Ajoute une majuscule."; continue; }
+    [[ "${PWD1}" =~ [a-z] ]]     || { warn "Ajoute une minuscule."; continue; }
+    [[ "${PWD1}" =~ [0-9] ]]     || { warn "Ajoute un chiffre."; continue; }
     ADMIN_PASSWORD="${PWD1}"
     break
   done
 else
-  [[ ${#ADMIN_PASSWORD} -ge 12 ]] \
-    || die "Mot de passe trop court (min. 12 caractères)."
+  [[ ${#ADMIN_PASSWORD} -ge 12 ]] || die "Mot de passe trop court (min. 12)."
 fi
 
 ok "Utilisateur : ${ADMIN_USER}"
-ok "Mot de passe : ${#ADMIN_PASSWORD} caractères (non affiché)"
+ok "Mot de passe : ${#ADMIN_PASSWORD} caractères"
 ok "Port MC     : ${MC_PORT}"
 
-# ----------------------------- Génération systemd ---------------------------
-SYSTEMD_FILE="deploy/${SERVICE_NAME}.service"
-mkdir -p deploy
+# ----------------------------- Dossier deploy -------------------------------
+DEPLOY_DIR="${PROJECT_ROOT}/deploy"
+mkdir -p "${DEPLOY_DIR}"
 
-# On génère un fichier .env séparé (root:mcpanel 0640)
-# → évite d'exposer le mot de passe dans `systemctl status`
-ENV_FILE="deploy/mcpanel.env"
+# ----------------------------- Génération .env ------------------------------
+ENV_FILE="${DEPLOY_DIR}/mcpanel.env"
 cat > "${ENV_FILE}" <<EOF
-# Identifiants initiaux du panel (lus uniquement au 1er lancement)
+# Identifiants initiaux (lus uniquement au 1er lancement)
 MCPANEL_ADMIN_USER=${ADMIN_USER}
 MCPANEL_ADMIN_PASSWORD=${ADMIN_PASSWORD}
 MCPANEL_MC_PORT=${MC_PORT}
 EOF
 chmod 600 "${ENV_FILE}"
-ok "Généré : ${ENV_FILE} (chmod 600, à supprimer après le 1er démarrage)"
+ok "Généré : ${ENV_FILE}"
 
+# ----------------------------- Génération systemd ---------------------------
+SYSTEMD_FILE="${DEPLOY_DIR}/${SERVICE_NAME}.service"
 cat > "${SYSTEMD_FILE}" <<EOF
 [Unit]
 Description=Panel Minecraft (Go)
@@ -194,11 +208,11 @@ EOF
 ok "Généré : ${SYSTEMD_FILE}"
 
 # ----------------------------- Génération nginx -----------------------------
-NGINX_FILE="deploy/${DOMAIN}.conf"
+NGINX_FILE="${DEPLOY_DIR}/${DOMAIN}.conf"
 cat > "${NGINX_FILE}" <<EOF
 # =============================================================================
 #  Panel Minecraft — ${DOMAIN}
-#  /etc/nginx/sites-available/${DOMAIN}
+#  Installer dans /etc/nginx/sites-available/${DOMAIN}
 # =============================================================================
 
 server {
@@ -206,13 +220,8 @@ server {
     listen [::]:80;
     server_name ${DOMAIN};
 
-    location /.well-known/acme-challenge/ {
-        root /var/www/html;
-    }
-
-    location / {
-        return 301 https://\$host\$request_uri;
-    }
+    location /.well-known/acme-challenge/ { root /var/www/html; }
+    location / { return 301 https://\$host\$request_uri; }
 }
 
 server {
@@ -248,28 +257,24 @@ server {
     location / {
         proxy_pass http://${PANEL_ADDR};
         proxy_http_version 1.1;
-
         proxy_set_header Host              \$host;
         proxy_set_header X-Real-IP         \$remote_addr;
         proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header X-Forwarded-Host  \$host;
-
         proxy_read_timeout  60s;
         proxy_send_timeout  60s;
         proxy_connect_timeout 5s;
         proxy_buffering off;
     }
 
-    location ~ /\.(?!well-known) {
-        deny all;
-    }
+    location ~ /\.(?!well-known) { deny all; }
 }
 EOF
 ok "Généré : ${NGINX_FILE}"
 
-# ----------------------------- Script d'installation ------------------------
-INSTALL_SCRIPT="deploy/install.sh"
+# ----------------------------- Génération install.sh ------------------------
+INSTALL_SCRIPT="${DEPLOY_DIR}/install.sh"
 cat > "${INSTALL_SCRIPT}" <<'INSTALL_EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -292,6 +297,15 @@ die(){ echo "${RED}✗${RST} $*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Lance en root (sudo)."
 
+# Le script est dans deploy/, mais on a besoin de templates/ et du binaire
+# → on suppose que l'utilisateur a rsync tout le repo dans /root/mcpanel-deploy
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+[[ -f "$SRC_ROOT/$BIN_NAME" ]] || die "Binaire $BIN_NAME introuvable dans $SRC_ROOT"
+[[ -d "$SRC_ROOT/templates" ]] || die "Dossier templates/ introuvable dans $SRC_ROOT"
+[[ -f "$SCRIPT_DIR/mcpanel.env" ]] || die "mcpanel.env introuvable dans $SCRIPT_DIR"
+
 info "Installation des paquets…"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
@@ -304,9 +318,9 @@ fi
 
 info "Copie des fichiers…"
 mkdir -p "$INSTALL_DIR"/{data,templates}
-install -m 0755 "$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
-install -m 0644 templates/*.html "$INSTALL_DIR/templates/"
-install -m 0600 mcpanel.env "$INSTALL_DIR/mcpanel.env"
+install -m 0755 "$SRC_ROOT/$BIN_NAME" "$INSTALL_DIR/$BIN_NAME"
+install -m 0644 "$SRC_ROOT"/templates/*.html "$INSTALL_DIR/templates/"
+install -m 0600 "$SCRIPT_DIR/mcpanel.env" "$INSTALL_DIR/mcpanel.env"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 chown root:"$SERVICE_USER" "$INSTALL_DIR/mcpanel.env"
 chmod 0640 "$INSTALL_DIR/mcpanel.env"
@@ -314,7 +328,7 @@ chmod 700 "$INSTALL_DIR/data"
 ok "Fichiers installés"
 
 info "Service systemd…"
-install -m 0644 "$SERVICE_NAME.service" /etc/systemd/system/"$SERVICE_NAME".service
+install -m 0644 "$SCRIPT_DIR/$SERVICE_NAME.service" /etc/systemd/system/"$SERVICE_NAME".service
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 systemctl restart "$SERVICE_NAME"
@@ -324,7 +338,7 @@ systemctl is-active --quiet "$SERVICE_NAME" \
 ok "Service $SERVICE_NAME actif"
 
 info "Vhost nginx…"
-install -m 0644 "$DOMAIN.conf" /etc/nginx/sites-available/"$DOMAIN"
+install -m 0644 "$SCRIPT_DIR/$DOMAIN.conf" /etc/nginx/sites-available/"$DOMAIN"
 ln -sf /etc/nginx/sites-available/"$DOMAIN" /etc/nginx/sites-enabled/"$DOMAIN"
 [[ -L /etc/nginx/sites-enabled/default ]] && rm -f /etc/nginx/sites-enabled/default
 ok "Vhost installé"
@@ -350,13 +364,11 @@ ufw allow 22/tcp comment 'SSH' >/dev/null
 ufw allow 80,443/tcp comment 'Web' >/dev/null
 ufw allow "$MC_PORT"/tcp comment 'Minecraft' >/dev/null
 ufw --force enable >/dev/null
-ok "ufw actif (22, 80, 443, $MC_PORT)"
+ok "ufw actif"
 
-# On peut supprimer le fichier .env contenant le mot de passe en clair
-# puisque la config JSON (hash bcrypt) est maintenant écrite.
 rm -f "$INSTALL_DIR/mcpanel.env"
 systemctl restart "$SERVICE_NAME"
-ok "Fichier .env supprimé (le mot de passe est hashé dans data/config.json)"
+ok "Fichier .env supprimé (hash bcrypt persisté dans data/config.json)"
 
 echo
 echo "═══════════════════════════════════════════════════════════════"
@@ -373,7 +385,6 @@ echo "    journalctl -u $SERVICE_NAME -f"
 echo
 INSTALL_EOF
 
-# Substitution des placeholders
 sed -i \
   -e "s|__DOMAIN__|${DOMAIN}|g" \
   -e "s|__EMAIL__|${EMAIL}|g" \
@@ -396,20 +407,21 @@ ${GRN}════════════════════════�
 ${GRN}  ✅ Build terminé — artefacts dans ./deploy/${RST}
 ${GRN}═══════════════════════════════════════════════════════════════${RST}
 
-  Domaine      : ${DOMAIN}
-  Admin        : ${ADMIN_USER}
-  Mot de passe : (défini, non affiché)
-  Port MC      : ${MC_PORT}
+  Domaine : ${DOMAIN}
+  Admin   : ${ADMIN_USER}
+  Port MC : ${MC_PORT}
 
-  Fichiers :
-    • ${SYSTEMD_FILE}
-    • ${NGINX_FILE}
-    • ${ENV_FILE}          ${YEL}(supprimé après install, contient le pwd en clair)${RST}
-    • ${INSTALL_SCRIPT}
+  ${BLU}Déploiement sur le VPS :${RST}
+    rsync -avz \\
+      --exclude='.git' \\
+      --exclude='deploy/mcpanel.env' \\
+      ./ root@<IP>:/root/mcpanel-deploy/
 
-  ${BLU}Déploiement :${RST}
-    rsync -avz deploy/ templates/ ${BIN_NAME} root@<IP>:/root/mcpanel-deploy/
-    ssh root@<IP> 'cd /root/mcpanel-deploy && ./install.sh'
+    ssh root@<IP> 'cd /root/mcpanel-deploy && ./deploy/install.sh'
+
+  ${YEL}⚠  Le fichier deploy/mcpanel.env contient le mot de passe en clair.${RST}
+     Envoie-le de manière sécurisée (scp/rsync avec SSH) et il sera
+     supprimé automatiquement après l'installation.
 
 EOF
 
