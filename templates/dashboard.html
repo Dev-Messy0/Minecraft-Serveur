@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Dashboard — Panel MC</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,sans-serif;background:#0f1115;color:#e6e8ee}
+  header{display:flex;justify-content:space-between;align-items:center;
+         padding:16px 24px;border-bottom:1px solid #232834;background:#12151b}
+  h1{font-size:16px;margin:0}
+  .badge{padding:4px 10px;border-radius:20px;font-size:12px;font-weight:600}
+  .on{background:#1a3325;color:#4ade80}
+  .off{background:#3b1c22;color:#ff8a95}
+  a.logout{color:#8a93a6;text-decoration:none;font-size:13px}
+  a.logout:hover{color:#e6e8ee}
+  main{padding:24px;display:grid;gap:20px;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .card{background:#171a21;border:1px solid #232834;border-radius:12px;padding:20px}
+  .card h2{margin:0 0 14px;font-size:13px;color:#8a93a6;text-transform:uppercase;letter-spacing:.5px}
+  .stat{font-size:26px;font-weight:700}
+  .stat small{font-size:13px;color:#8a93a6;font-weight:400;margin-left:6px}
+  .row{display:flex;gap:10px;margin-top:12px}
+  button{padding:11px 16px;border:0;border-radius:9px;font-weight:600;font-size:14px;cursor:pointer}
+  .start{background:#1a3325;color:#4ade80}
+  .start:hover{background:#22503a}
+  .stop{background:#3b1c22;color:#ff8a95}
+  .stop:hover{background:#55272f}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  input[type=text],input[type=password]{width:100%;padding:10px 12px;border-radius:9px;
+        border:1px solid #262c39;background:#0f1115;color:#e6e8ee;outline:none;font-size:14px;margin-bottom:8px}
+  input:focus{border-color:#4f8cff}
+  pre{background:#0b0d12;border:1px solid #232834;border-radius:10px;padding:14px;
+      max-height:280px;overflow:auto;font-size:12px;color:#9fb4d8;margin:0;white-space:pre-wrap}
+  .toast{position:fixed;bottom:20px;right:20px;padding:12px 18px;border-radius:10px;
+         background:#1a3325;color:#4ade80;font-size:14px;display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>🎮 Panel Minecraft</h1>
+  <div style="display:flex;gap:14px;align-items:center">
+    <span id="badge" class="badge {{if .Running}}on{{else}}off{{end}}">
+      {{if .Running}}En ligne{{else}}Arrêté{{end}}
+    </span>
+    <a class="logout" href="/logout">Déconnexion</a>
+  </div>
+</header>
+
+<main>
+  <div class="card">
+    <h2>État du serveur</h2>
+    <div class="stat" id="status">—</div>
+    <div class="row">
+      <button id="btn-start" class="start">▶ Démarrer</button>
+      <button id="btn-stop"  class="stop">■ Arrêter</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Statistiques</h2>
+    <div class="stat" id="pings">0 <small>pings</small></div>
+    <div class="stat" id="logins" style="margin-top:8px">0 <small>tentatives</small></div>
+    <div class="stat" id="uptime" style="margin-top:8px;font-size:18px">— <small>uptime</small></div>
+    <div style="margin-top:12px;color:#8a93a6;font-size:13px">Port : <b>{{.Port}}</b></div>
+  </div>
+
+  <div class="card">
+    <h2>MOTD</h2>
+    <input type="text" id="motd" placeholder="§aMon serveur">
+    <div class="row"><button class="start" id="btn-motd">💾 Enregistrer</button></div>
+  </div>
+
+  <div class="card">
+    <h2>Mot de passe</h2>
+    <input type="password" id="pwd-old" placeholder="Ancien">
+    <input type="password" id="pwd-new" placeholder="Nouveau (min. 10)">
+    <div class="row"><button class="start" id="btn-pwd">🔑 Changer</button></div>
+  </div>
+
+  <div class="card" style="grid-column:1/-1">
+    <h2>Logs (temps réel)</h2>
+    <pre id="logs">En attente…</pre>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const toast = (m, ok = true) => {
+  const t = $('#toast');
+  t.textContent = m;
+  t.style.background = ok ? '#1a3325' : '#3b1c22';
+  t.style.color      = ok ? '#4ade80' : '#ff8a95';
+  t.style.display = 'block';
+  setTimeout(() => t.style.display = 'none', 2200);
+};
+
+const fmtUptime = s => {
+  if (!s) return '—';
+  const h = Math.floor(s/3600), m = Math.floor(s%3600/60), sec = s%60;
+  return `${h}h ${m}m ${sec}s`;
+};
+
+async function refresh() {
+  const r = await fetch('/api/status');
+  if (!r.ok) return;
+  const d = await r.json();
+
+  $('#status').innerHTML = d.running
+    ? `<span style="color:#4ade80">En ligne</span>`
+    : `<span style="color:#ff8a95">Arrêté</span>`;
+
+  const badge = $('#badge');
+  badge.textContent = d.running ? 'En ligne' : 'Arrêté';
+  badge.className   = 'badge ' + (d.running ? 'on' : 'off');
+
+  $('#pings').innerHTML  = `${d.pings} <small>pings</small>`;
+  $('#logins').innerHTML = `${d.logins} <small>tentatives</small>`;
+  $('#uptime').innerHTML = `${fmtUptime(d.uptime)} <small>uptime</small>`;
+
+  if (document.activeElement !== $('#motd')) $('#motd').value = d.motd;
+
+  $('#btn-start').disabled = d.running;
+  $('#btn-stop').disabled  = !d.running;
+
+  const logs = $('#logs');
+  logs.textContent = (d.logs || []).join('\n') || 'Aucun log…';
+  logs.scrollTop = logs.scrollHeight;
+}
+
+$('#btn-start').onclick = async () => {
+  const r = await fetch('/api/start', {method: 'POST'});
+  const d = await r.json();
+  toast(d.ok ? 'Serveur démarré' : (d.error || 'Erreur'), d.ok);
+  refresh();
+};
+$('#btn-stop').onclick = async () => {
+  const r = await fetch('/api/stop', {method: 'POST'});
+  const d = await r.json();
+  toast(d.ok ? 'Serveur arrêté' : (d.error || 'Erreur'), d.ok);
+  refresh();
+};
+$('#btn-motd').onclick = async () => {
+  const motd = $('#motd').value.trim();
+  const r = await fetch('/api/motd', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({motd})
+  });
+  toast(r.ok ? 'MOTD enregistré' : 'MOTD invalide', r.ok);
+};
+$('#btn-pwd').onclick = async () => {
+  const oldp = $('#pwd-old').value, newp = $('#pwd-new').value;
+  const r = await fetch('/api/password', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({old: oldp, new: newp})
+  });
+  toast(r.ok ? 'Mot de passe changé' : 'Échec (voir conditions)', r.ok);
+  if (r.ok) { $('#pwd-old').value = ''; $('#pwd-new').value = ''; }
+};
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
